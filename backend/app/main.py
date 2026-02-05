@@ -1,16 +1,16 @@
-# from fastapi import FastAPI
-# from fastapi.middleware.cors import CORSMiddleware
-# from fastapi.staticfiles import StaticFiles
-# from contextlib import asynccontextmanager
-# from app.config import settings
-# from app.database import connect_to_mongo, close_mongo_connection
-# from app.routes import news, notifications
-# from app.utils.scheduler import start_scheduler, stop_scheduler
-# from app.services.news_fetcher import news_fetcher
-# from pathlib import Path
-# import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from app.config import settings
+from app.database import connect_to_mongo, close_mongo_connection
+from app.routes import news, notifications
+from app.utils.scheduler import start_scheduler, stop_scheduler
+from app.services.news_fetcher import news_fetcher
+from pathlib import Path
+import os
 
-# # ✅ CRITICAL: Initialize Firebase FIRST, before anything else
+# ✅ CRITICAL: Initialize Firebase FIRST, before anything else
 # try:
 #     import firebase_admin
 #     from firebase_admin import credentials
@@ -26,194 +26,91 @@
 # except Exception as e:
 #     print(f"⚠️ Firebase initialization failed: {e}")
 
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-#     # Startup
-#     await connect_to_mongo()
-#     start_scheduler()
+
+# ✅ FIXED Firebase initialization for Render
+try:
+    import firebase_admin
+    from firebase_admin import credentials
+    import json
+    import os
     
-#     # Create static directory
-#     Path("static/audio").mkdir(parents=True, exist_ok=True)
+    # Try environment variable first (Render deployment)
+    firebase_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
     
-#     print("Fetching initial news...")
-#     await news_fetcher.fetch_and_store_all_categories()
-    
-#     yield
-    
-#     # Shutdown
-#     stop_scheduler()
-#     await close_mongo_connection()
-
-# app = FastAPI(
-#     title="News Aggregation Platform API",
-#     description="API for news aggregation with AI summaries",
-#     version="2.0.0",
-#     lifespan=lifespan
-# )
-
-# # ✅ FIXED: CORS middleware with correct port
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "http://localhost:5173",  # ✅ Correct Vite frontend port
-#         "http://localhost:5174",  # Backup port
-#         "http://127.0.0.1:5173",
-#     ],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# # Mount static files
-# app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# # Include routers
-# app.include_router(news.router)
-# app.include_router(notifications.router)
-
-# @app.get("/")
-# async def root():
-#     return {
-#         "message": "News Aggregation Platform API",
-#         "version": "2.0.0",
-#         "features": ["Hindi Support", "AI Summaries", "Voice Reading", "Push Notifications"],
-#         "docs": "/docs"
-#     }
-
-# @app.get("/health")
-# async def health():
-#     return {"status": "healthy"}
-
-
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
-from pathlib import Path
-import os
-import logging
-
-from app.config import settings
-from app.database import connect_to_mongo, close_mongo_connection
-from app.routes import news, notifications
-from app.utils.scheduler import start_scheduler, stop_scheduler
-from app.services.news_fetcher import news_fetcher
-
-# ---------------------------------------------------
-# LOGGING
-# ---------------------------------------------------
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------
-# FIREBASE INITIALIZATION (SAFE FOR RENDER)
-# ---------------------------------------------------
-def init_firebase():
-    try:
-        import firebase_admin
-        from firebase_admin import credentials
-
-        if firebase_admin._apps:
-            logger.info("Firebase already initialized")
-            return
-
-        cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-
-        if cred_path and os.path.exists(cred_path):
+    if firebase_json:
+        try:
+            # Parse JSON from environment variable
+            cred_dict = json.loads(firebase_json)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase initialized from environment variable")
+        except json.JSONDecodeError:
+            print("⚠️ Invalid Firebase JSON in environment variable")
+    else:
+        # Fall back to file (local development)
+        cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "firebase-credentials.json")
+        if os.path.exists(cred_path):
             cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred)
-            logger.info("✅ Firebase initialized successfully")
+            print("✅ Firebase initialized from file")
         else:
-            logger.warning("⚠️ Firebase credentials not found, notifications disabled")
+            print("⚠️ Firebase credentials not found - notifications disabled")
+except Exception as e:
+    print(f"⚠️ Firebase initialization failed: {e}")
+    # Don't crash the app - just disable notifications
 
-    except Exception as e:
-        logger.warning(f"⚠️ Firebase init failed: {e}")
-
-# ---------------------------------------------------
-# LIFESPAN (STARTUP / SHUTDOWN)
-# ---------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP
-    logger.info("🚀 Starting application")
-
+    # Startup
     await connect_to_mongo()
-    init_firebase()
-
-    # Static directory
-    static_path = Path("static/audio")
-    static_path.mkdir(parents=True, exist_ok=True)
-
     start_scheduler()
-
-    try:
-        logger.info("📰 Fetching initial news...")
-        await news_fetcher.fetch_and_store_all_categories()
-    except Exception as e:
-        logger.warning(f"Initial news fetch skipped: {e}")
-
+    
+    # Create static directory
+    Path("static/audio").mkdir(parents=True, exist_ok=True)
+    
+    print("Fetching initial news...")
+    await news_fetcher.fetch_and_store_all_categories()
+    
     yield
-
-    # SHUTDOWN
-    logger.info("🛑 Shutting down application")
+    
+    # Shutdown
     stop_scheduler()
     await close_mongo_connection()
 
-# ---------------------------------------------------
-# FASTAPI APP
-# ---------------------------------------------------
 app = FastAPI(
     title="News Aggregation Platform API",
     description="API for news aggregation with AI summaries",
     version="2.0.0",
-    lifespan=lifespan,
+    lifespan=lifespan
 )
 
-# ---------------------------------------------------
-# CORS CONFIG (VERCEL + LOCAL)
-# ---------------------------------------------------
-origins = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:5173",
-    "https://*.vercel.app",   # ✅ Vercel frontend
-]
-
+# ✅ FIXED: CORS middleware with correct port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "http://localhost:5173",  # ✅ Correct Vite frontend port
+        "http://localhost:5174",  # Backup port
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------
-# STATIC FILES
-# ---------------------------------------------------
+# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ---------------------------------------------------
-# ROUTES
-# ---------------------------------------------------
+# Include routers
 app.include_router(news.router)
 app.include_router(notifications.router)
 
-# ---------------------------------------------------
-# HEALTH & ROOT
-# ---------------------------------------------------
 @app.get("/")
 async def root():
     return {
         "message": "News Aggregation Platform API",
         "version": "2.0.0",
-        "features": [
-            "Hindi Support",
-            "AI Summaries",
-            "Voice Reading",
-            "Push Notifications"
-        ],
-        "docs": "/docs",
+        "features": ["Hindi Support", "AI Summaries", "Voice Reading", "Push Notifications"],
+        "docs": "/docs"
     }
 
 @app.get("/health")
